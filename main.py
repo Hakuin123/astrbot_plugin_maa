@@ -1,6 +1,6 @@
 """
 MAA 远程控制 AstrBot 插件
-通过消息平台远程控制 MAA（明日方舟助手）
+通过消息平台远程控制 MAA
 """
 
 import asyncio
@@ -19,10 +19,39 @@ from astrbot.api.star import Context, Star, register
 import astrbot.api.message_components as Comp
 
 
+# 任务别名映射表
+TASK_ALIASES = {
+    # 键值 (不区分大小写)
+    "base": "LinkStart-Base",
+    "wakeup": "LinkStart-WakeUp",
+    "combat": "LinkStart-Combat",
+    "recruiting": "LinkStart-Recruiting",
+    "mall": "LinkStart-Mall",
+    "mission": "LinkStart-Mission",
+    "autoroguelike": "LinkStart-AutoRoguelike",
+    "reclamation": "LinkStart-Reclamation",
+    # 中文别名
+    "基建换班": "LinkStart-Base",
+    "基建": "LinkStart-Base",
+    "开始唤醒": "LinkStart-WakeUp",
+    "刷理智": "LinkStart-Combat",
+    "自动公招": "LinkStart-Recruiting",
+    "公招": "LinkStart-Recruiting",
+    "获取信用及购物": "LinkStart-Mall",
+    "信用": "LinkStart-Mall",
+    "领取奖励": "LinkStart-Mission",
+    "自动肉鸽": "LinkStart-AutoRoguelike",
+    "肉鸽": "LinkStart-AutoRoguelike",
+    "生息演算": "LinkStart-Reclamation",
+    # 特殊值
+    "all": "LinkStart",
+}
+
+
 @register(
     "astrbot_plugin_maa",
     "Hakuin123",
-    "通过消息平台远程控制 MAA（明日方舟助手）",
+    "通过消息平台远程控制 MAA",
     "1.0.0",
     "https://github.com/Hakuin123/astrbot_plugin_MAA",
 )
@@ -167,9 +196,7 @@ class MAAPlugin(Star):
         sender_id = self.device_to_sender.get(device_id)
         if sender_id and sender_id in self.bindings:
             binding = self.bindings[sender_id]
-            umo = binding.get("umo")
-
-            if umo:
+            if umo := binding.get("umo"):
                 # 发送任务完成通知
                 message = f"✅ MAA 任务完成\n状态: {status}"
 
@@ -179,7 +206,7 @@ class MAAPlugin(Star):
                         await self._send_screenshot(umo, payload, message)
                     except Exception as e:
                         logger.error(f"发送截图失败: {e}")
-                        chain = MessageChain().message(message + f"\n(截图发送失败: {e})")
+                        chain = MessageChain().message(f"{message}\n(截图发送失败: {e})")
                         await self.context.send_message(umo, chain)
                 else:
                     chain = MessageChain().message(message)
@@ -276,7 +303,7 @@ class MAAPlugin(Star):
 
         yield event.plain_result(
             f"✅ 绑定成功！\n\n"
-            f"📱 设备ID: {device_id[:16]}...\n\n"
+            f"🖥️ 设备ID: {device_id[:16]}...\n\n"
             f"请在 MAA 中配置以下端点:\n"
             f"• 获取任务: http://<你的IP>:{self.http_port}/maa/getTask\n"
             f"• 汇报状态: http://<你的IP>:{self.http_port}/maa/reportStatus\n"
@@ -343,9 +370,20 @@ class MAAPlugin(Star):
             f"待执行任务: {pending} 个"
         )
 
-    @maa.command("linkstart", alias={"start"})
-    async def maa_linkstart(self, event: AstrMessageEvent):
-        """执行一键长草任务"""
+    @maa.command("start")
+    async def maa_start(self, event: AstrMessageEvent, tasks: str):
+        """执行指定任务
+
+        用法:
+          /maa start ALL                    - 完整一键长草
+          /maa start 自动肉鸽               - 单个任务
+          /maa start 开始唤醒,刷理智,信用   - 多个任务（英文逗号分隔）
+
+        可用任务:
+          Base/基建换班/基建, WakeUp/开始唤醒, Combat/刷理智,
+          Recruiting/自动公招/公招, Mall/获取信用及购物/信用,
+          Mission/领取奖励, AutoRoguelike/自动肉鸽/肉鸽, Reclamation/生息演算
+        """
         sender_id = event.get_sender_id()
 
         if sender_id not in self.bindings:
@@ -353,13 +391,52 @@ class MAAPlugin(Star):
             return
 
         device_id = self.bindings[sender_id]["device_id"]
-        task_id = self._add_task(device_id, "LinkStart")
+
+        # 解析任务列表（英文逗号分隔）
+        task_names = [t.strip() for t in tasks.split(",") if t.strip()]
+        if not task_names:
+            yield event.plain_result("❌ 请指定要执行的任务\n用法: /maa start ALL 或 /maa start 刷理智,公招")
+            return
+
+        # 解析任务类型
+        task_types = []
+        for name in task_names:
+            # 查找映射（键值不区分大小写，中文精确匹配）
+            task_type = TASK_ALIASES.get(name.lower()) or TASK_ALIASES.get(name)
+            if not task_type:
+                yield event.plain_result(
+                    f"❌ 未知任务: {name}\n\n"
+                    f"可用任务:\n"
+                    f"  ALL - 完整一键长草\n"
+                    f"  Base/基建换班/基建\n"
+                    f"  WakeUp/开始唤醒\n"
+                    f"  Combat/刷理智\n"
+                    f"  Recruiting/自动公招/公招\n"
+                    f"  Mall/获取信用及购物/信用\n"
+                    f"  Mission/领取奖励\n"
+                    f"  AutoRoguelike/自动肉鸽/肉鸽\n"
+                    f"  Reclamation/生息演算"
+                )
+                return
+            task_types.append((name, task_type))
+
+        # 添加任务到队列
+        added_tasks = []
+        for name, task_type in task_types:
+            task_id = self._add_task(device_id, task_type)
+            added_tasks.append(f"• {name} ({task_type})")
 
         yield event.plain_result(
-            f"✅ 一键长草任务已添加\n"
-            f"任务ID: {task_id[:8]}...\n"
+            f"✅ 已添加 {len(added_tasks)} 个任务\n\n"
+            + "\n".join(added_tasks) + "\n\n"
             f"MAA 将在下次轮询时执行"
         )
+
+    @maa.command("linkstart")
+    async def maa_linkstart(self, event: AstrMessageEvent):
+        """执行完整一键长草任务 (快捷方式)"""
+        async for res in self.maa_start(event, "ALL"):
+            yield res
 
     @maa.command("screenshot", alias={"cap", "ss"})
     async def maa_screenshot(self, event: AstrMessageEvent):
