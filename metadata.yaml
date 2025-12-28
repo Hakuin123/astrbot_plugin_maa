@@ -1,6 +1,6 @@
 name: astrbot_plugin_maa
 display_name: MAA 远程控制
-desc: 通过消息平台远程控制 MAA（明日方舟助手）
+desc: 通过 AstrBot 远程控制 MAA
 version: v1.0.0
 author: Hakuin123
 repo: https://github.com/Hakuin123/astrbot_plugin_MAA

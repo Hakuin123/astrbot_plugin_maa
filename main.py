@@ -1,8 +1,3 @@
-"""
-MAA 远程控制 AstrBot 插件
-通过消息平台远程控制 MAA
-"""
-
 import asyncio
 import base64
 import json
@@ -51,7 +46,7 @@ TASK_ALIASES = {
 @register(
     "astrbot_plugin_maa",
     "Hakuin123",
-    "通过消息平台远程控制 MAA",
+    "通过 AstrBot 远程控制 MAA",
     "1.0.0",
     "https://github.com/Hakuin123/astrbot_plugin_MAA",
 )
@@ -282,14 +277,14 @@ class MAAPlugin(Star):
         if sender_id in self.bindings:
             old_device = self.bindings[sender_id]["device_id"]
             yield event.plain_result(
-                f"⚠️ 你已绑定设备: {old_device[:8]}...\n"
+                f"⚠︎ 已绑定设备: {old_device[:8]}...\n"
                 "请先使用 /maa unbind 解绑后再绑定新设备"
             )
             return
 
         # 检查设备是否已被其他用户绑定
         if device_id in self.device_to_sender:
-            yield event.plain_result("❌ 该设备已被其他用户绑定")
+            yield event.plain_result("❌ 错误：该设备已被其他用户绑定")
             return
 
         # 保存绑定信息
@@ -303,8 +298,8 @@ class MAAPlugin(Star):
 
         yield event.plain_result(
             f"✅ 绑定成功！\n\n"
-            f"🖥️ 设备ID: {device_id[:16]}...\n\n"
-            f"请在 MAA 中配置以下端点:\n"
+            f"设备ID: {device_id[:16]}...\n\n"
+            f"请在 MAA 设置-远程控制 配置以下端点:\n"
             f"• 获取任务: http://<你的IP>:{self.http_port}/maa/getTask\n"
             f"• 汇报状态: http://<你的IP>:{self.http_port}/maa/reportStatus\n"
             f"• 用户标识符: {sender_id}"
@@ -316,7 +311,7 @@ class MAAPlugin(Star):
         sender_id = event.get_sender_id()
 
         if sender_id not in self.bindings:
-            yield event.plain_result("❌ 你尚未绑定任何设备")
+            yield event.plain_result("❌ 错误：您尚未绑定任何设备")
             return
 
         old_device = self.bindings[sender_id]["device_id"]
@@ -339,7 +334,7 @@ class MAAPlugin(Star):
         sender_id = event.get_sender_id()
 
         if sender_id not in self.bindings:
-            yield event.plain_result("❌ 你尚未绑定任何设备\n使用 /maa bind <设备ID> 绑定")
+            yield event.plain_result("❌ 错误：您尚未绑定任何设备\n使用 /maa bind <设备ID> 绑定")
             return
 
         binding = self.bindings[sender_id]
@@ -387,7 +382,7 @@ class MAAPlugin(Star):
         sender_id = event.get_sender_id()
 
         if sender_id not in self.bindings:
-            yield event.plain_result("❌ 请先绑定设备: /maa bind <设备ID>")
+            yield event.plain_result("❌ 错误：请先绑定设备: /maa bind <设备ID>")
             return
 
         device_id = self.bindings[sender_id]["device_id"]
@@ -395,7 +390,7 @@ class MAAPlugin(Star):
         # 解析任务列表（英文逗号分隔）
         task_names = [t.strip() for t in tasks.split(",") if t.strip()]
         if not task_names:
-            yield event.plain_result("❌ 请指定要执行的任务\n用法: /maa start ALL 或 /maa start 刷理智,公招")
+            yield event.plain_result("❌ 错误：请指定要执行的任务\n用法: /maa start ALL 或 /maa start 刷理智,公招")
             return
 
         # 解析任务类型
@@ -405,7 +400,7 @@ class MAAPlugin(Star):
             task_type = TASK_ALIASES.get(name.lower()) or TASK_ALIASES.get(name)
             if not task_type:
                 yield event.plain_result(
-                    f"❌ 未知任务: {name}\n\n"
+                    f"❌ 错误：未知任务: {name}\n\n"
                     f"可用任务:\n"
                     f"  ALL - 完整一键长草\n"
                     f"  Base/基建换班/基建\n"
@@ -444,7 +439,7 @@ class MAAPlugin(Star):
         sender_id = event.get_sender_id()
 
         if sender_id not in self.bindings:
-            yield event.plain_result("❌ 请先绑定设备: /maa bind <设备ID>")
+            yield event.plain_result("❌ 错误：请先绑定设备: /maa bind <设备ID>")
             return
 
         device_id = self.bindings[sender_id]["device_id"]
@@ -456,7 +451,7 @@ class MAAPlugin(Star):
             self.task_queues[device_id] = []
         self.task_queues[device_id].insert(0, task)  # 插入队首
 
-        yield event.plain_result("📸 截图任务已添加，稍后将收到截图")
+        yield event.plain_result("截图任务已添加，等待 MAA 响应")
 
     @maa.command("stop")
     async def maa_stop(self, event: AstrMessageEvent):
@@ -464,7 +459,7 @@ class MAAPlugin(Star):
         sender_id = event.get_sender_id()
 
         if sender_id not in self.bindings:
-            yield event.plain_result("❌ 请先绑定设备: /maa bind <设备ID>")
+            yield event.plain_result("❌ 错误：请先绑定设备: /maa bind <设备ID>")
             return
 
         device_id = self.bindings[sender_id]["device_id"]
@@ -483,7 +478,7 @@ class MAAPlugin(Star):
         sender_id = event.get_sender_id()
 
         if sender_id not in self.bindings:
-            yield event.plain_result("❌ 请先绑定设备: /maa bind <设备ID>")
+            yield event.plain_result("❌ 错误：请先绑定设备: /maa bind <设备ID>")
             return
 
         device_id = self.bindings[sender_id]["device_id"]
@@ -494,7 +489,7 @@ class MAAPlugin(Star):
             self.task_queues[device_id] = []
         self.task_queues[device_id].insert(0, task)
 
-        yield event.plain_result("💓 心跳检测已发送，稍后将返回当前任务状态")
+        yield event.plain_result("心跳检测已发送，等待 MAA 返回当前任务状态")
 
     async def terminate(self):
         """插件销毁，停止 HTTP 服务器"""
