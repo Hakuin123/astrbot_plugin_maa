@@ -68,7 +68,7 @@ class MAAPlugin(Star):
         self.data_dir = StarTools.get_data_dir("astrbot_plugin_maa")
         self.data_dir.mkdir(parents=True, exist_ok=True)
 
-        # 设备绑定: {sender_id: {"device_id": str, "user_id": str, "umo": str}}
+        # 设备绑定: {sender_id: {"active_device": str, "devices": {device_id: {"umo": str, "alias": str}}}}
         self.bindings: Dict[str, dict] = {}
         # 反向索引: {device_id: sender_id}
         self.device_to_sender: Dict[str, str] = {}
@@ -95,11 +95,36 @@ class MAAPlugin(Star):
         if bindings_file.exists():
             try:
                 with open(bindings_file, "r", encoding="utf-8") as f:
-                    self.bindings = json.load(f)
+                    data = json.load(f)
+                
+                migrated = False
+                for sender_id, info in data.items():
+                    if "device_id" in info:
+                        # 旧版格式迁移到新版格式
+                        device_id = info["device_id"]
+                        self.bindings[sender_id] = {
+                            "active_device": device_id,
+                            "devices": {
+                                device_id: {
+                                    "umo": info.get("umo", ""),
+                                    "alias": "设备1"
+                                }
+                            }
+                        }
+                        migrated = True
+                    else:
+                        # 新版格式
+                        self.bindings[sender_id] = info
+
+                if migrated:
+                    self._save_data()
+
                 # 重建反向索引
-                for sender_id, info in self.bindings.items():
-                    self.device_to_sender[info["device_id"]] = sender_id
-                logger.info(f"已加载 {len(self.bindings)} 个设备绑定")
+                for sender_id, user_data in self.bindings.items():
+                    for device_id in user_data.get("devices", {}).keys():
+                        self.device_to_sender[device_id] = sender_id
+                        
+                logger.info(f"已加载 {len(self.bindings)} 个用户的设备绑定")
             except Exception as e:
                 logger.error(f"加载绑定数据失败: {e}")
 
@@ -111,6 +136,15 @@ class MAAPlugin(Star):
                 json.dump(self.bindings, f, ensure_ascii=False, indent=2)
         except Exception as e:
             logger.error(f"保存绑定数据失败: {e}")
+
+    def _get_active_device(self, sender_id: str) -> Optional[str]:
+        """获取用户的当前活跃设备 ID"""
+        if sender_id in self.bindings:
+            user_data = self.bindings[sender_id]
+            active_id = user_data.get("active_device")
+            if active_id and active_id in user_data.get("devices", {}):
+                return active_id
+        return None
 
     @filter.on_astrbot_loaded()
     async def initialize(self):
@@ -221,16 +255,19 @@ class MAAPlugin(Star):
         # 查找对应用户并发送通知
         sender_id = self.device_to_sender.get(device_id)
         if sender_id and sender_id in self.bindings:
-            binding = self.bindings[sender_id]
-            if umo := binding.get("umo"):
+            user_data = self.bindings[sender_id]
+            device_info = user_data.get("devices", {}).get(device_id, {})
+            alias = device_info.get("alias", device_id[:8])
+            
+            if umo := device_info.get("umo"):
                 # 构建通知消息
                 if should_notify:
                     if self.notify_on_each_task:
-                        message = f"✅ MAA 任务完成：{task_name}\n状态: {status}"
+                        message = f"✅ MAA 任务完成 [{alias}]：{task_name}\n状态: {status}"
                         if remaining_user_tasks > 0:
                             message += f"\n剩余任务: {remaining_user_tasks} 个"
                     else:
-                        message = f"✅ MAA 所有任务已完成\n最后完成: {task_name}\n状态: {status}"
+                        message = f"✅ MAA 所有任务已完成 [{alias}]\n最后完成: {task_name}\n状态: {status}"
 
                     # 如果有截图数据（Base64），发送图片
                     if payload and len(payload) > 100:  # 可能是截图
@@ -266,7 +303,8 @@ class MAAPlugin(Star):
             f.write(image_data)
 
         # 发送消息和图片
-        chain = MessageChain().message(message).file_image(str(temp_file))
+        chain = MessageChain().message(message) if message else MessageChain()
+        chain = chain.file_image(str(temp_file))
         await self.context.send_message(umo, chain)
 
         # 延迟删除临时文件
@@ -328,39 +366,50 @@ class MAAPlugin(Star):
         pass
 
     @maa.command("bind")
-    async def maa_bind(self, event: AstrMessageEvent, device_id: str):
+    async def maa_bind(self, event: AstrMessageEvent, device_id: str, alias: str = ""):
         """绑定 MAA 设备
 
-        用法: /maa bind <设备标识符>
+        用法: /maa bind <设备标识符> [设备别名]
         设备标识符可在 MAA 设置中查看
         """
         sender_id = event.get_sender_id()
 
-        # 检查是否已绑定其他设备
-        if sender_id in self.bindings:
-            old_device = self.bindings[sender_id]["device_id"]
-            yield event.plain_result(
-                f"⚠︎ 已绑定设备: {old_device[:8]}...\n"
-                "请先使用 /maa unbind 解绑后再绑定新设备"
-            )
-            return
-
         # 检查设备是否已被其他用户绑定
-        if device_id in self.device_to_sender:
+        if device_id in self.device_to_sender and self.device_to_sender[device_id] != sender_id:
             yield event.plain_result("❌ 错误：该设备已被其他用户绑定")
             return
 
+        user_data = self.bindings.setdefault(sender_id, {"active_device": "", "devices": {}})
+        
+        if device_id in user_data["devices"]:
+            # 如果已存在，允许更新别名
+            if alias:
+                user_data["devices"][device_id]["alias"] = alias
+                self._save_data()
+                yield event.plain_result(f"✅ 设备别名已更新为: {alias}")
+            else:
+                yield event.plain_result(f"⚠︎ 该设备已绑定。")
+            return
+
+        if not alias:
+            alias = f"设备{len(user_data['devices']) + 1}"
+
         # 保存绑定信息
-        self.bindings[sender_id] = {
-            "device_id": device_id,
-            "user_id": sender_id,  # 可作为 MAA 的用户标识符
+        user_data["devices"][device_id] = {
             "umo": event.unified_msg_origin,
+            "alias": alias
         }
+        
+        # 如果是第一个设备，或者未设置活跃设备，将其设为活跃设备
+        if not user_data["active_device"]:
+            user_data["active_device"] = device_id
+            
         self.device_to_sender[device_id] = sender_id
         self._save_data()
 
         yield event.plain_result(
             f"✅ 绑定成功！\n\n"
+            f"设备别名: {alias}\n"
             f"设备ID: {device_id[:16]}...\n\n"
             f"请在 MAA 设置-远程控制 配置以下端点:\n"
             f"• 获取任务: http://<你的IP>:{self.http_port}/maa/getTask\n"
@@ -369,39 +418,150 @@ class MAAPlugin(Star):
         )
 
     @maa.command("unbind")
-    async def maa_unbind(self, event: AstrMessageEvent):
-        """解绑 MAA 设备"""
+    async def maa_unbind(self, event: AstrMessageEvent, identifier: str = ""):
+        """解绑 MAA 设备
+        
+        用法: /maa unbind [设备ID或别名]
+        """
         sender_id = event.get_sender_id()
 
-        if sender_id not in self.bindings:
+        if sender_id not in self.bindings or not self.bindings[sender_id]["devices"]:
             yield event.plain_result("❌ 错误：您尚未绑定任何设备")
             return
 
-        old_device = self.bindings[sender_id]["device_id"]
+        user_data = self.bindings[sender_id]
+        devices = user_data["devices"]
 
+        target_device_id = None
+        if not identifier:
+            if len(devices) == 1:
+                target_device_id = list(devices.keys())[0]
+            else:
+                yield event.plain_result("⚠︎ 您绑定了多个设备，请指定要解绑的设备ID或别名。\n查看设备列表请使用: /maa list")
+                return
+        else:
+            # 尝试通过 ID 或别名匹配
+            for d_id, info in devices.items():
+                if d_id.startswith(identifier) or info.get("alias") == identifier:
+                    target_device_id = d_id
+                    break
+
+        if not target_device_id:
+            yield event.plain_result(f"❌ 未找到匹配的设备: {identifier}")
+            return
+
+        alias = devices[target_device_id].get("alias", "")
+        
         # 清理数据
-        del self.device_to_sender[old_device]
-        del self.bindings[sender_id]
-        if old_device in self.task_queues:
-            del self.task_queues[old_device]
-        if old_device in self.executed_tasks:
-            del self.executed_tasks[old_device]
+        del self.device_to_sender[target_device_id]
+        del devices[target_device_id]
+        
+        if target_device_id in self.task_queues:
+            del self.task_queues[target_device_id]
+        if target_device_id in self.executed_tasks:
+            del self.executed_tasks[target_device_id]
+
+        # 如果解绑的是当前活跃设备，自动切换到其他设备（如果有）
+        if user_data["active_device"] == target_device_id:
+            if devices:
+                user_data["active_device"] = list(devices.keys())[0]
+            else:
+                user_data["active_device"] = ""
+
+        # 如果所有设备都解绑了，可以清理 user_data
+        if not devices:
+            del self.bindings[sender_id]
 
         self._save_data()
 
-        yield event.plain_result(f"✅ 已解绑设备: {old_device[:16]}...")
+        msg = f"✅ 已解绑设备: {alias} ({target_device_id[:8]}...)"
+        if sender_id in self.bindings and self.bindings[sender_id]["active_device"]:
+            new_active = self.bindings[sender_id]['active_device']
+            new_alias = self.bindings[sender_id]['devices'][new_active].get('alias', '')
+            msg += f"\n当前活跃设备已切换为: {new_alias} ({new_active[:8]}...)"
+            
+        yield event.plain_result(msg)
+
+    @maa.command("list")
+    async def maa_list(self, event: AstrMessageEvent):
+        """列出所有绑定的设备"""
+        sender_id = event.get_sender_id()
+
+        if sender_id not in self.bindings or not self.bindings[sender_id]["devices"]:
+            yield event.plain_result("ℹ️ 您尚未绑定任何设备")
+            return
+
+        user_data = self.bindings[sender_id]
+        devices = user_data["devices"]
+        active_device = user_data["active_device"]
+
+        lines = ["📱 已绑定的 MAA 设备列表："]
+        for d_id, info in devices.items():
+            alias = info.get("alias", "")
+            
+            # 获取状态
+            last_seen = self.device_last_seen.get(d_id, 0)
+            now = time.time()
+            if last_seen > 0:
+                elapsed = now - last_seen
+                if elapsed < 10:
+                    status = "🟢在线"
+                elif elapsed < 60:
+                    status = "🟡闲置"
+                else:
+                    status = "🔴离线"
+            else:
+                status = "⚪未连"
+
+            marker = "👉 " if d_id == active_device else "   "
+            lines.append(f"{marker}[{alias}] {status} - {d_id[:8]}...")
+
+        lines.append("\n提示：使用 /maa switch <别名/ID> 切换当前控制的设备")
+        yield event.plain_result("\n".join(lines))
+
+    @maa.command("switch", alias={"use"})
+    async def maa_switch(self, event: AstrMessageEvent, identifier: str):
+        """切换当前活跃的设备
+        
+        用法: /maa switch <设备ID或别名>
+        """
+        sender_id = event.get_sender_id()
+
+        if sender_id not in self.bindings or not self.bindings[sender_id]["devices"]:
+            yield event.plain_result("❌ 错误：您尚未绑定任何设备")
+            return
+
+        user_data = self.bindings[sender_id]
+        devices = user_data["devices"]
+
+        target_device_id = None
+        for d_id, info in devices.items():
+            if d_id.startswith(identifier) or info.get("alias") == identifier:
+                target_device_id = d_id
+                break
+
+        if not target_device_id:
+            yield event.plain_result(f"❌ 未找到匹配的设备: {identifier}\n使用 /maa list 查看设备列表")
+            return
+
+        user_data["active_device"] = target_device_id
+        self._save_data()
+        
+        alias = devices[target_device_id].get("alias", "")
+        yield event.plain_result(f"✅ 已切换到设备: {alias} ({target_device_id[:8]}...)")
 
     @maa.command("status")
     async def maa_status(self, event: AstrMessageEvent):
-        """查看设备状态"""
+        """查看当前设备状态"""
         sender_id = event.get_sender_id()
+        device_id = self._get_active_device(sender_id)
 
-        if sender_id not in self.bindings:
-            yield event.plain_result("❌ 错误：您尚未绑定任何设备\n使用 /maa bind <设备ID> 绑定")
+        if not device_id:
+            yield event.plain_result("❌ 错误：您尚未绑定设备或未设置活跃设备\n使用 /maa bind <设备ID> 绑定")
             return
 
-        binding = self.bindings[sender_id]
-        device_id = binding["device_id"]
+        user_data = self.bindings[sender_id]
+        alias = user_data["devices"][device_id].get("alias", "")
 
         # 检查设备在线状态
         last_seen = self.device_last_seen.get(device_id, 0)
@@ -421,7 +581,7 @@ class MAAPlugin(Star):
         pending = len(self.task_queues.get(device_id, []))
 
         yield event.plain_result(
-            f"📊 MAA 设备状态\n\n"
+            f"📊 MAA 设备状态 [{alias}]\n\n"
             f"设备ID: {device_id[:16]}...\n"
             f"状态: {status}\n"
             f"待执行任务: {pending} 个"
@@ -442,17 +602,18 @@ class MAAPlugin(Star):
           Mission/领取奖励, AutoRoguelike/自动肉鸽/肉鸽, Reclamation/生息演算
         """
         sender_id = event.get_sender_id()
+        device_id = self._get_active_device(sender_id)
 
-        if sender_id not in self.bindings:
+        if not device_id:
             yield event.plain_result("❌ 错误：请先绑定设备: /maa bind <设备ID>")
             return
 
-        device_id = self.bindings[sender_id]["device_id"]
+        alias = self.bindings[sender_id]["devices"][device_id].get("alias", "")
 
         # 解析任务列表（英文逗号分隔）
         task_names = [t.strip() for t in tasks.split(",") if t.strip()]
         if not task_names:
-            yield event.plain_result("❌ 错误：请指定要执行的任务\n用法: /maa start ALL 或 /maa start 刷理智,公招")
+            yield event.plain_result("❌ 错误：请指定要执行任务\n用法: /maa start ALL 或 /maa start 刷理智,公招")
             return
 
         # 解析任务类型
@@ -484,7 +645,7 @@ class MAAPlugin(Star):
             added_tasks.append(f"• {name} ({task_type})")
 
         yield event.plain_result(
-            f"✅ 已添加 {len(added_tasks)} 个任务\n\n"
+            f"✅ 已添加 {len(added_tasks)} 个任务到设备 [{alias}]\n\n"
             + "\n".join(added_tasks) + "\n\n"
             f"MAA 将在下次轮询时执行"
         )
@@ -499,12 +660,14 @@ class MAAPlugin(Star):
     async def maa_screenshot(self, event: AstrMessageEvent):
         """获取当前截图"""
         sender_id = event.get_sender_id()
+        device_id = self._get_active_device(sender_id)
 
-        if sender_id not in self.bindings:
+        if not device_id:
             yield event.plain_result("❌ 错误：请先绑定设备: /maa bind <设备ID>")
             return
 
-        device_id = self.bindings[sender_id]["device_id"]
+        alias = self.bindings[sender_id]["devices"][device_id].get("alias", "")
+        
         # 使用立即截图任务，不等待队列
         task_id = str(uuid.uuid4())
         task = {"id": task_id, "type": "CaptureImageNow"}
@@ -513,18 +676,20 @@ class MAAPlugin(Star):
             self.task_queues[device_id] = []
         self.task_queues[device_id].insert(0, task)  # 插入队首
 
-        yield event.plain_result("截图任务已添加，等待 MAA 响应")
+        yield event.plain_result(f"📸 截图任务已添加到设备 [{alias}]，等待 MAA 响应")
 
     @maa.command("stop")
     async def maa_stop(self, event: AstrMessageEvent):
         """停止当前任务"""
         sender_id = event.get_sender_id()
+        device_id = self._get_active_device(sender_id)
 
-        if sender_id not in self.bindings:
+        if not device_id:
             yield event.plain_result("❌ 错误：请先绑定设备: /maa bind <设备ID>")
             return
 
-        device_id = self.bindings[sender_id]["device_id"]
+        alias = self.bindings[sender_id]["devices"][device_id].get("alias", "")
+        
         task_id = str(uuid.uuid4())
         task = {"id": task_id, "type": "StopTask"}
 
@@ -532,18 +697,20 @@ class MAAPlugin(Star):
             self.task_queues[device_id] = []
         self.task_queues[device_id].insert(0, task)
 
-        yield event.plain_result("🛑 停止任务指令已发送")
+        yield event.plain_result(f"🛑 停止任务指令已发送到设备 [{alias}]")
 
     @maa.command("heartbeat", alias={"ping"})
     async def maa_heartbeat(self, event: AstrMessageEvent):
         """发送心跳检测"""
         sender_id = event.get_sender_id()
+        device_id = self._get_active_device(sender_id)
 
-        if sender_id not in self.bindings:
+        if not device_id:
             yield event.plain_result("❌ 错误：请先绑定设备: /maa bind <设备ID>")
             return
 
-        device_id = self.bindings[sender_id]["device_id"]
+        alias = self.bindings[sender_id]["devices"][device_id].get("alias", "")
+        
         task_id = str(uuid.uuid4())
         task = {"id": task_id, "type": "HeartBeat"}
 
@@ -551,7 +718,7 @@ class MAAPlugin(Star):
             self.task_queues[device_id] = []
         self.task_queues[device_id].insert(0, task)
 
-        yield event.plain_result("心跳检测已发送，等待 MAA 返回当前任务状态")
+        yield event.plain_result(f"💓 心跳检测已发送到设备 [{alias}]，等待 MAA 返回当前任务状态")
 
     async def terminate(self):
         """插件销毁，停止 HTTP 服务器"""
