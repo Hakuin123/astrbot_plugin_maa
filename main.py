@@ -426,7 +426,7 @@ class MAAPlugin(Star):
         sender_id = event.get_sender_id()
 
         if sender_id not in self.bindings or not self.bindings[sender_id]["devices"]:
-            yield event.plain_result("❌ 错误：您尚未绑定任何设备")
+            yield event.plain_result("❌ 错误：尚未绑定任何设备")
             return
 
         user_data = self.bindings[sender_id]
@@ -437,7 +437,7 @@ class MAAPlugin(Star):
             if len(devices) == 1:
                 target_device_id = list(devices.keys())[0]
             else:
-                yield event.plain_result("⚠︎ 您绑定了多个设备，请指定要解绑的设备ID或别名。\n查看设备列表请使用: /maa list")
+                yield event.plain_result("⚠︎ 当前已绑定多个设备，请指定要解绑的设备ID或别名。\n查看设备列表请使用: /maa list")
                 return
         else:
             # 尝试通过 ID 或别名匹配
@@ -488,7 +488,7 @@ class MAAPlugin(Star):
         sender_id = event.get_sender_id()
 
         if sender_id not in self.bindings or not self.bindings[sender_id]["devices"]:
-            yield event.plain_result("ℹ️ 您尚未绑定任何设备")
+            yield event.plain_result("ℹ️ 尚未绑定任何设备")
             return
 
         user_data = self.bindings[sender_id]
@@ -519,6 +519,37 @@ class MAAPlugin(Star):
         lines.append("\n提示：使用 /maa switch <别名/ID> 切换当前控制的设备")
         yield event.plain_result("\n".join(lines))
 
+    @maa.command("rename")
+    async def maa_rename(self, event: AstrMessageEvent, old_identifier: str, new_alias: str):
+        """重命名设备别名
+        
+        用法: /maa rename <设备ID或旧别名> <新别名>
+        """
+        sender_id = event.get_sender_id()
+
+        if sender_id not in self.bindings or not self.bindings[sender_id]["devices"]:
+            yield event.plain_result("❌ 错误：尚未绑定任何设备")
+            return
+
+        user_data = self.bindings[sender_id]
+        devices = user_data["devices"]
+
+        target_device_id = None
+        for d_id, info in devices.items():
+            if d_id.startswith(old_identifier) or info.get("alias") == old_identifier:
+                target_device_id = d_id
+                break
+
+        if not target_device_id:
+            yield event.plain_result(f"❌ 未找到匹配的设备: {old_identifier}\n使用 /maa list 查看设备列表")
+            return
+            
+        old_alias = devices[target_device_id].get("alias", "")
+        devices[target_device_id]["alias"] = new_alias
+        self._save_data()
+        
+        yield event.plain_result(f"✅ 设备已重命名: {old_alias} -> {new_alias}")
+
     @maa.command("switch", alias={"use"})
     async def maa_switch(self, event: AstrMessageEvent, identifier: str):
         """切换当前活跃的设备
@@ -528,7 +559,7 @@ class MAAPlugin(Star):
         sender_id = event.get_sender_id()
 
         if sender_id not in self.bindings or not self.bindings[sender_id]["devices"]:
-            yield event.plain_result("❌ 错误：您尚未绑定任何设备")
+            yield event.plain_result("❌ 错误：尚未绑定任何设备")
             return
 
         user_data = self.bindings[sender_id]
@@ -557,7 +588,7 @@ class MAAPlugin(Star):
         device_id = self._get_active_device(sender_id)
 
         if not device_id:
-            yield event.plain_result("❌ 错误：您尚未绑定设备或未设置活跃设备\n使用 /maa bind <设备ID> 绑定")
+            yield event.plain_result("❌ 错误：尚未绑定设备或未设置活跃设备\n使用 /maa bind <设备ID> 绑定")
             return
 
         user_data = self.bindings[sender_id]
