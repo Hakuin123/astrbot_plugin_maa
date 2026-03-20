@@ -79,7 +79,7 @@ class MAAPlugin(Star):
         self.executed_tasks: Dict[str, Set[str]] = {}
         # 设备最后活跃时间: {device_id: timestamp}
         self.device_last_seen: Dict[str, float] = {}
-        # 任务信息映射: {task_id: {"name": str, "type": str, "device_id": str}}
+        # 任务信息映射: {task_id: {"name": str, "type": str, "device_id": str, "umo": str}}
         self.task_info: Dict[str, dict] = {}
 
         # HTTP 服务器相关
@@ -223,6 +223,7 @@ class MAAPlugin(Star):
         task_info = self.task_info.get(task_id, {})
         task_name = task_info.get("name", "未知任务")
         task_type = task_info.get("type", "")
+        task_umo = task_info.get("umo", "")
 
         # 标记任务已执行
         if device_id not in self.executed_tasks:
@@ -259,8 +260,10 @@ class MAAPlugin(Star):
             user_data = self.bindings[sender_id]
             device_info = user_data.get("devices", {}).get(device_id, {})
             alias = device_info.get("alias", device_id[:8])
-            
-            if umo := device_info.get("umo"):
+
+            # 优先使用任务级别的回复目标；缺失时回退到设备绑定的 umo
+            umo = task_umo or device_info.get("umo", "")
+            if umo:
                 # 构建通知消息
                 if should_notify:
                     if self.notify_on_each_task:
@@ -320,7 +323,14 @@ class MAAPlugin(Star):
         except Exception as e:
             logger.debug(f"删除临时文件失败: {e}")
 
-    def _add_task(self, device_id: str, task_type: str, task_name: str = "", params: str = "") -> str:
+    def _add_task(
+        self,
+        device_id: str,
+        task_type: str,
+        task_name: str = "",
+        params: str = "",
+        umo: str = "",
+    ) -> str:
         """添加任务到队列，返回任务 ID
         
         Args:
@@ -343,7 +353,8 @@ class MAAPlugin(Star):
         self.task_info[task_id] = {
             "name": task_name or task_type,
             "type": task_type,
-            "device_id": device_id
+            "device_id": device_id,
+            "umo": umo,
         }
 
         # 如果开启自动截图，追加截图任务
@@ -354,7 +365,8 @@ class MAAPlugin(Star):
             self.task_info[screenshot_task_id] = {
                 "name": "自动截图",
                 "type": "CaptureImage",
-                "device_id": device_id
+                "device_id": device_id,
+                "umo": umo,
             }
 
         return task_id
@@ -514,7 +526,7 @@ class MAAPlugin(Star):
                 else:
                     status = "🔴离线"
             else:
-                status = "⚪未连"
+                status = "⚪未连接"
 
             marker = "👉 " if d_id == active_device else "   "
             lines.append(f"{marker}[{alias}] {status} - {d_id[:8]}...")
@@ -675,7 +687,9 @@ class MAAPlugin(Star):
         # 添加任务到队列
         added_tasks = []
         for name, task_type in task_types:
-            task_id = self._add_task(device_id, task_type, task_name=name)
+            task_id = self._add_task(
+                device_id, task_type, task_name=name, umo=event.unified_msg_origin
+            )
             added_tasks.append(f"• {name} ({task_type})")
 
         yield event.plain_result(
@@ -709,6 +723,12 @@ class MAAPlugin(Star):
         if device_id not in self.task_queues:
             self.task_queues[device_id] = []
         self.task_queues[device_id].insert(0, task)  # 插入队首
+        self.task_info[task_id] = {
+            "name": "截图",
+            "type": "CaptureImageNow",
+            "device_id": device_id,
+            "umo": event.unified_msg_origin,
+        }
 
         yield event.plain_result(f"📸 截图任务已添加到设备 [{alias}]，等待 MAA 响应")
 
@@ -730,6 +750,12 @@ class MAAPlugin(Star):
         if device_id not in self.task_queues:
             self.task_queues[device_id] = []
         self.task_queues[device_id].insert(0, task)
+        self.task_info[task_id] = {
+            "name": "停止任务",
+            "type": "StopTask",
+            "device_id": device_id,
+            "umo": event.unified_msg_origin,
+        }
 
         yield event.plain_result(f"🛑 停止任务指令已发送到设备 [{alias}]")
 
@@ -751,6 +777,12 @@ class MAAPlugin(Star):
         if device_id not in self.task_queues:
             self.task_queues[device_id] = []
         self.task_queues[device_id].insert(0, task)
+        self.task_info[task_id] = {
+            "name": "心跳检测",
+            "type": "HeartBeat",
+            "device_id": device_id,
+            "umo": event.unified_msg_origin,
+        }
 
         yield event.plain_result(f"💓 心跳检测已发送到设备 [{alias}]，等待 MAA 返回当前任务状态")
 
