@@ -43,6 +43,9 @@ TASK_ALIASES = {
     "all": "LinkStart",
 }
 
+# HTTP 请求体大小上限，影响截图上报可接收的最大体积
+MAX_REQUEST_MB = 64
+
 
 @register(
     "astrbot_plugin_maa",
@@ -158,7 +161,8 @@ class MAAPlugin(Star):
             logger.warning("MAA HTTP 服务已在运行中，跳过启动")
             return
 
-        self.app = web.Application()
+        # MAA 截图 payload 可能很大（数十 MB），需要放宽请求体限制
+        self.app = web.Application(client_max_size=MAX_REQUEST_MB * 1024 * 1024)
         self.app.router.add_post("/maa/getTask", self._handle_get_task)
         self.app.router.add_post("/maa/reportStatus", self._handle_report_status)
 
@@ -168,15 +172,34 @@ class MAAPlugin(Star):
         try:
             self.site = web.TCPSite(self.runner, self.http_host, self.http_port)
             await self.site.start()
-            logger.info(f"MAA HTTP 服务已启动: http://{self.http_host}:{self.http_port}")
+            logger.info(
+                f"MAA HTTP 服务已启动: http://{self.http_host}:{self.http_port} "
+                f"(max_request_mb={MAX_REQUEST_MB})"
+            )
         except OSError as e:
             logger.error(f"HTTP 服务启动失败，端口 {self.http_port} 可能被占用: {e}")
 
+    async def _read_json(self, request: web.Request, endpoint: str) -> Optional[dict]:
+        """读取 JSON 请求体"""
+        try:
+            return await request.json()
+        except web.HTTPRequestEntityTooLarge:
+            logger.warning(
+                f"{endpoint} 请求体过大: content_length={request.content_length}, "
+                f"max_request_mb={MAX_REQUEST_MB}"
+            )
+            return None
+        except Exception as e:
+            logger.warning(
+                f"{endpoint} JSON 解析失败: {e} "
+                f"(content_length={request.content_length})"
+            )
+            return None
+
     async def _handle_get_task(self, request: web.Request) -> web.Response:
         """处理 MAA 获取任务请求"""
-        try:
-            data = await request.json()
-        except Exception:
+        data = await self._read_json(request, "getTask")
+        if not data:
             return web.json_response({"tasks": []}, status=400)
 
         device_id = data.get("device", "")
@@ -206,9 +229,8 @@ class MAAPlugin(Star):
 
     async def _handle_report_status(self, request: web.Request) -> web.Response:
         """处理 MAA 汇报任务状态"""
-        try:
-            data = await request.json()
-        except Exception:
+        data = await self._read_json(request, "reportStatus")
+        if not data:
             return web.Response(status=400)
 
         device_id = data.get("device", "")
