@@ -743,7 +743,7 @@ class MAAPlugin(Star):
             return
 
         alias = self.bindings[sender_id]["devices"][device_id].get("alias", "")
-        
+
         task_id = str(uuid.uuid4())
         task = {"id": task_id, "type": "StopTask"}
 
@@ -758,6 +758,26 @@ class MAAPlugin(Star):
         }
 
         yield event.plain_result(f"🛑 停止任务指令已发送到设备 [{alias}]")
+
+    @maa.command("clear")
+    async def maa_clear(self, event: AstrMessageEvent):
+        """清空当前设备的任务队列"""
+        sender_id = event.get_sender_id()
+        device_id = self._get_active_device(sender_id)
+
+        if not device_id:
+            yield event.plain_result("❌ 错误：请先绑定设备: /maa bind <设备ID>")
+            return
+
+        alias = self.bindings[sender_id]["devices"][device_id].get("alias", "")
+
+        # 清空该设备的待执行任务与对应任务信息
+        self.task_queues[device_id] = []
+        self.task_info = {
+            k: v for k, v in self.task_info.items() if v.get("device_id") != device_id
+        }
+
+        yield event.plain_result(f"🧹 已清空设备 [{alias}] 的任务队列")
 
     @maa.command("heartbeat", alias={"ping"})
     async def maa_heartbeat(self, event: AstrMessageEvent):

@@ -61,6 +61,7 @@
 -   `/maa status`: 查看当前操作设备在线状态及待执行任务
 -   `/maa screenshot` (或 `/maa ss`): 立即获取当前设备的模拟器截图
 -   `/maa stop`: 停止当前正在执行的任务
+-   `/maa clear`: 清空任务队列
 -   `/maa heartbeat`: 发送心跳检测
 
 ### 执行任务
@@ -95,7 +96,7 @@
 在 AstrBot 管理面板或 `config.yaml` 中可配置：
 
 -  `http_host`: HTTP 服务监听地址 (默认 `0.0.0.0`)
--  `http_port`: HTTP 服务监听端口 (默认 `2828`，因为2月8日是[帕拉斯](https://prts.wiki/w/%E5%B8%95%E6%8B%89%E6%96%AF#%E5%B9%B2%E5%91%98%E6%A1%A3%E6%A1%88)干员的生日)
+-  `http_port`: HTTP 服务监听端口 (默认 `2828`，因为2月8日是[帕拉斯](https://prts.wiki/w/%E5%B8%95%E6%8B%89%E6%96%AF#%E5%B9%B2%E5%91%98%E6%A1%A3%E6%A1%88)干员，也就是 MAA 吉祥物的生日)
 -  `auto_screenshot`: 任务完成后是否自动发送截图 (默认 `true`)
 
 > [!WARNING]
