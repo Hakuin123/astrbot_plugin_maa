@@ -3,13 +3,13 @@
     "type": "string",
     "default": "0.0.0.0",
     "description": "HTTP 服务监听地址",
-    "hint": "MAA 将通过此地址连接插件"
+    "hint": "设为 0.0.0.0 允许外部访问，127.0.0.1 仅限本机访问"
   },
   "http_port": {
     "type": "int",
     "default": 2828,
     "description": "HTTP 服务端口",
-    "hint": "确保端口未被占用，MAA 需要配置相同端口"
+    "hint": "默认 2828，请确保未被占用"
   },
   "auto_screenshot": {
     "type": "bool",
@@ -22,5 +22,11 @@
     "default": false,
     "description": "每项任务完成后立即发送通知",
     "hint": "关闭时仅在所有任务全部完成后发送一次通知（默认）；开启后每完成一个任务都会发送通知"
+  },
+  "custom_address": {
+    "type": "string",
+    "default": "",
+    "description": "自定义连接地址",
+    "hint": "（可选）用于在绑定设备时替换提示中的基础地址。如有端口号需一并填入。示例格式：http://127.0.0.1:2828 或 https://maa.test.com。为空时默认提示“<你的地址>:端口”"
   }
 }

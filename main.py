@@ -63,6 +63,7 @@ class MAAPlugin(Star):
         self.http_port: int = config.get("http_port", 2828)
         self.auto_screenshot: bool = config.get("auto_screenshot", True)
         self.notify_on_each_task: bool = config.get("notify_on_each_task", False)
+        self.custom_address: str = config.get("custom_address", "")
 
         # 数据存储 (使用 StarTools.get_data_dir 获取规范路径)
         self.data_dir = StarTools.get_data_dir("astrbot_plugin_maa")
@@ -407,13 +408,15 @@ class MAAPlugin(Star):
         self.device_to_sender[device_id] = sender_id
         self._save_data()
 
+        base_url = self.custom_address if self.custom_address else f"<你的地址>:{self.http_port}"
+
         yield event.plain_result(
             f"✅ 绑定成功！\n\n"
             f"设备别名: {alias}\n"
             f"设备ID: {device_id[:16]}...\n\n"
             f"请在 MAA 设置-远程控制 配置以下端点:\n"
-            f"• 获取任务: http://<你的IP>:{self.http_port}/maa/getTask\n"
-            f"• 汇报状态: http://<你的IP>:{self.http_port}/maa/reportStatus\n"
+            f"• 获取任务: {base_url}/maa/getTask\n"
+            f"• 汇报状态: {base_url}/maa/reportStatus\n"
             f"• 用户标识符: {sender_id}"
         )
 

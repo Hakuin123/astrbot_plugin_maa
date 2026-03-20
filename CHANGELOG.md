@@ -1,8 +1,13 @@
 ## Changelog
 
+### v1.1.1
+- feat: 新增 `/maa rename` 设备管理指令
+- feat: 支持自定义连接地址配置
+
+---
+
 ### v1.1.0
 - feat: 支持单个用户绑定和管理多个 MAA 设备
-- feat: 新增 `/maa list` 和 `/maa switch` 设备管理指令
 
 ### v1.0.0
 - 基本功能实现
