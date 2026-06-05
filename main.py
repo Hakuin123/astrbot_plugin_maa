@@ -200,13 +200,15 @@ class MAAPlugin(Star):
         """处理 MAA 获取任务请求"""
         data = await self._read_json(request, "getTask")
         if not data:
-            return web.json_response({"tasks": []}, status=400)
+            return web.json_response({"message": "请求体为空或 JSON 解析失败"}, status=400)
 
         device_id = data.get("device", "")
         user_id = data.get("user", "")
 
         if not device_id:
-            return web.json_response({"tasks": []}, status=400)
+            return web.json_response({"message": "缺少 device 参数"}, status=400)
+        if not user_id:
+            return web.json_response({"message": "缺少 user 参数"}, status=400)
 
         # 更新设备最后活跃时间
         self.device_last_seen[device_id] = time.time()
@@ -214,9 +216,11 @@ class MAAPlugin(Star):
         # 检查是否是已绑定的设备
         sender_id = self.device_to_sender.get(device_id)
         if not sender_id:
-            # 设备未绑定，返回空任务但记录日志
-            logger.debug(f"未绑定设备请求: device={device_id}, user={user_id}")
-            return web.json_response({"tasks": []})
+            logger.warning(f"未绑定设备请求: device={device_id}, user={user_id}")
+            return web.json_response(
+                {"message": f"设备 {device_id} 未绑定，请先通过 /maa bind 命令绑定"},
+                status=404,
+            )
 
         # 获取任务队列
         tasks = self.task_queues.get(device_id, [])
@@ -231,15 +235,20 @@ class MAAPlugin(Star):
         """处理 MAA 汇报任务状态"""
         data = await self._read_json(request, "reportStatus")
         if not data:
-            return web.Response(status=400)
+            return web.json_response({"message": "请求体为空或 JSON 解析失败"}, status=400)
 
         device_id = data.get("device", "")
         task_id = data.get("task", "")
+        user_id = data.get("user", "")
         status = data.get("status", "")
         payload = data.get("payload", "")
 
         if not device_id or not task_id:
-            return web.Response(status=400)
+            return web.json_response(
+                {"message": "缺少 device 或 task 参数"}, status=400
+            )
+        if not user_id:
+            return web.json_response({"message": "缺少 user 参数"}, status=400)
 
         # 获取任务信息
         task_info = self.task_info.get(task_id, {})
@@ -423,7 +432,7 @@ class MAAPlugin(Star):
                 self._save_data()
                 yield event.plain_result(f"✅ 设备别名已更新为: {alias}")
             else:
-                yield event.plain_result(f"⚠︎ 该设备已绑定。")
+                yield event.plain_result(f"⚠︎ 该设备已绑定")
             return
 
         if not alias:
@@ -474,7 +483,7 @@ class MAAPlugin(Star):
             if len(devices) == 1:
                 target_device_id = list(devices.keys())[0]
             else:
-                yield event.plain_result("⚠︎ 当前已绑定多个设备，请指定要解绑的设备ID或别名。\n查看设备列表请使用: /maa list")
+                yield event.plain_result("⚠︎ 当前已绑定多个设备，请指定要解绑的设备ID或别名\n查看设备列表请使用: /maa list")
                 return
         else:
             # 尝试通过 ID 或别名匹配
